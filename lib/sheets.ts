@@ -6,12 +6,6 @@ const ESERCENTI_SHEET_NAME = process.env.ESERCENTI_SHEET_NAME || "Untitled";
 const CLIENTI_SPREADSHEET_ID = process.env.CLIENTI_SPREADSHEET_ID!;
 const CLIENTI_SHEET_NAME = process.env.CLIENTI_SHEET_NAME || "Foglio1";
 
-// Column layout (0-indexed) — must match the Make.com scenarios exactly.
-// Esercenti (Database Centrale): A ID | B Data Attivazione | C Nome Attività | D Email
-// | E WhatsApp | F Tipo Attività | G Link Google Maps | H Stato | I Stripe Customer ID
-// | J Stripe Subscription ID | K Stato Pagamento | L Data Ultimo Pagamento
-// | M Data Prossimo Rinnovo | N Data Ultimo Fallimento Pagamento | O Ultimo Promemoria
-// | P Codice Accesso (added for the dashboard login)
 const ESERCENTI_COLS = {
   id: 0,
   dataAttivazione: 1,
@@ -21,12 +15,9 @@ const ESERCENTI_COLS = {
   tipoAttivita: 5,
   linkGoogleMaps: 6,
   stato: 7,
-  codiceAccesso: 15, // column P
+  codiceAccesso: 15,
 };
 
-// Clienti (Foglio1): A Submission ID | B Respondent ID | C Submitted at
-// | D Nome del Cliente | E Numero WhatsApp del Cliente | F email (=email ESERCENTE)
-// | G costante | H - | I Origine | J Stato | K Data/Ora Invio
 const CLIENTI_COLS = {
   submissionId: 0,
   respondentId: 1,
@@ -39,17 +30,29 @@ const CLIENTI_COLS = {
   dataOraInvio: 10,
 };
 
+function resolvePrivateKey(): string | undefined {
+  const b64 = process.env.GOOGLE_PRIVATE_KEY_BASE64;
+  if (b64) {
+    return Buffer.from(b64, "base64").toString("utf8");
+  }
+  const raw = process.env.GOOGLE_PRIVATE_KEY;
+  if (raw) {
+    return raw.replace(/\\n/g, "\n");
+  }
+  return undefined;
+}
+
 function getAuth() {
   const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-  const key = process.env.GOOGLE_PRIVATE_KEY;
+  const key = resolvePrivateKey();
   if (!email || !key) {
     throw new Error(
-      "Credenziali Google mancanti: imposta GOOGLE_SERVICE_ACCOUNT_EMAIL e GOOGLE_PRIVATE_KEY"
+      "Credenziali Google mancanti: imposta GOOGLE_SERVICE_ACCOUNT_EMAIL e GOOGLE_PRIVATE_KEY_BASE64 (oppure GOOGLE_PRIVATE_KEY)"
     );
   }
   return new google.auth.JWT({
     email,
-    key: key.replace(/\\n/g, "\n"),
+    key,
     scopes: ["https://www.googleapis.com/auth/spreadsheets"],
   });
 }
@@ -78,7 +81,6 @@ export type Cliente = {
   dataOraInvio: string;
 };
 
-/** Trova l'esercente per email e valida il codice di accesso. */
 export async function authenticateEsercente(
   email: string,
   codiceAccesso: string
@@ -112,7 +114,6 @@ export async function authenticateEsercente(
   return null;
 }
 
-/** Recupera tutti i clienti collegati a un esercente (per email). */
 export async function getClientsForEsercente(
   esercenteEmail: string
 ): Promise<Cliente[]> {
@@ -139,7 +140,6 @@ export async function getClientsForEsercente(
       });
     }
   }
-  // Più recenti prima
   out.sort((a, b) => (a.submittedAt < b.submittedAt ? 1 : -1));
   return out;
 }
