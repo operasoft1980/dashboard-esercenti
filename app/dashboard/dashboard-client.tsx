@@ -11,6 +11,9 @@ type Cliente = {
   submittedAt: string;
   stato: string;
   dataOraInvio: string;
+  stelle: number | null;
+  commento: string;
+  dataRecensione: string;
 };
 
 type ImportRow = {
@@ -152,6 +155,19 @@ export default function DashboardClient({
 
   const statiUnici = Array.from(new Set(clients.map((c) => c.stato))).filter(Boolean);
   const selezionabili = useMemo(() => clients.filter((c) => c.stato !== STATO_INVIATO), [clients]);
+
+  // Statistiche calcolate sui risultati attualmente filtrati (stato/data),
+  // non su tutti i clienti dell'esercente: cambiano insieme ai filtri sopra.
+  const stats = useMemo(() => {
+    const totale = clients.length;
+    const inviati = clients.filter((c) => c.stato === STATO_INVIATO).length;
+    const nonInviati = totale - inviati;
+    const recensiti = clients.filter((c) => c.stelle !== null).length;
+    const perStella = [1, 2, 3, 4, 5].map(
+      (n) => clients.filter((c) => c.stelle === n).length
+    );
+    return { totale, inviati, nonInviati, recensiti, perStella };
+  }, [clients]);
   const tuttiSelezionati =
     selezionabili.length > 0 && selezionabili.every((c) => selected.has(c.submissionId));
 
@@ -345,6 +361,57 @@ export default function DashboardClient({
           <div className="bg-white rounded-xl border border-gray-200 p-4">
             <p className="text-xs text-gray-500">Risultati filtrati</p>
             <p className="text-2xl font-semibold text-gray-900">{clients.length}</p>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-xl border border-gray-200 p-4 mb-6">
+          <p className="text-xs text-gray-500 mb-3">
+            Statistiche sui {stats.totale} risultati filtrati sopra
+          </p>
+          <div className="flex flex-wrap gap-4 mb-4">
+            <StatCircle
+              label="Inviati"
+              value={stats.inviati}
+              total={stats.totale}
+              colorClass="text-green-600"
+              trackClass="text-green-100"
+            />
+            <StatCircle
+              label="Non inviati"
+              value={stats.nonInviati}
+              total={stats.totale}
+              colorClass="text-red-500"
+              trackClass="text-red-100"
+            />
+            <StatCircle
+              label="Recensiti"
+              value={stats.recensiti}
+              total={stats.totale}
+              colorClass="text-blue-600"
+              trackClass="text-blue-100"
+            />
+          </div>
+          <div>
+            <p className="text-xs text-gray-500 mb-2">
+              Distribuzione voti (dalla 4 in su vanno su Google, sotto restano privati)
+            </p>
+            <div className="flex flex-wrap gap-3">
+              {stats.perStella.map((count, i) => {
+                const n = i + 1;
+                const pubblica = n >= 4;
+                return (
+                  <StatCircle
+                    key={n}
+                    label={`${n}${"⭐"}`}
+                    value={count}
+                    total={stats.recensiti}
+                    colorClass={pubblica ? "text-amber-500" : "text-gray-400"}
+                    trackClass={pubblica ? "text-amber-100" : "text-gray-100"}
+                    size={64}
+                  />
+                );
+              })}
+            </div>
           </div>
         </div>
 
@@ -738,6 +805,62 @@ export default function DashboardClient({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/** Cerchio statistico: valore/totale con un anello proporzionale (SVG). */
+function StatCircle({
+  label,
+  value,
+  total,
+  colorClass,
+  trackClass,
+  size = 76,
+}: {
+  label: string;
+  value: number;
+  total: number;
+  colorClass: string;
+  trackClass: string;
+  size?: number;
+}) {
+  const radius = (size - 10) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const pct = total > 0 ? value / total : 0;
+  const dashoffset = circumference * (1 - pct);
+
+  return (
+    <div className="flex flex-col items-center" style={{ width: size + 8 }}>
+      <div className="relative" style={{ width: size, height: size }}>
+        <svg width={size} height={size} className="-rotate-90">
+          <circle
+            cx={size / 2}
+            cy={size / 2}
+            r={radius}
+            strokeWidth={6}
+            fill="none"
+            className={trackClass}
+            stroke="currentColor"
+          />
+          <circle
+            cx={size / 2}
+            cy={size / 2}
+            r={radius}
+            strokeWidth={6}
+            fill="none"
+            className={colorClass}
+            stroke="currentColor"
+            strokeLinecap="round"
+            strokeDasharray={circumference}
+            strokeDashoffset={dashoffset}
+          />
+        </svg>
+        <div className="absolute inset-0 flex items-center justify-center">
+          <span className="text-sm font-semibold text-gray-900">{value}</span>
+        </div>
+      </div>
+      <span className="text-[11px] text-gray-500 mt-1 text-center leading-tight">{label}</span>
     </div>
   );
 }
