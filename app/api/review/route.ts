@@ -36,4 +36,3 @@ export async function POST(req: NextRequest) {
     redirectUrl: inviaAGoogle ? cliente.linkGoogleMapsEsercente : null,
   });
 }
-
