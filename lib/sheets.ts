@@ -29,6 +29,9 @@ const CLIENTI_COLS = {
   origine: 8,
   stato: 9,
   dataOraInvio: 10,
+  stelle: 11,
+  commento: 12,
+  dataRecensione: 13,
 };
 
 function resolvePrivateKey(): string | undefined {
@@ -81,10 +84,18 @@ export type Cliente = {
   submittedAt: string;
   stato: string;
   dataOraInvio: string;
+  stelle: number | null;
+  commento: string;
+  dataRecensione: string;
 };
 
 export const STATO_NON_INVIATO = "Non inviato";
 export const STATO_INVIATO = "Inviato";
+
+function parseStelle(value: string | undefined): number | null {
+  const n = parseInt((value || "").trim(), 10);
+  return Number.isFinite(n) && n >= 1 && n <= 5 ? n : null;
+}
 
 export async function authenticateEsercente(
   email: string,
@@ -125,7 +136,7 @@ export async function getClientsForEsercente(
   const sheets = sheetsClient();
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: CLIENTI_SPREADSHEET_ID,
-    range: `${CLIENTI_SHEET_NAME}!A2:K50000`,
+    range: `${CLIENTI_SHEET_NAME}!A2:N50000`,
   });
   const rows = res.data.values || [];
   const normalizedEmail = esercenteEmail.trim().toLowerCase();
@@ -143,11 +154,98 @@ export async function getClientsForEsercente(
         submittedAt: row[CLIENTI_COLS.submittedAt] || "",
         stato: row[CLIENTI_COLS.stato] || "",
         dataOraInvio: row[CLIENTI_COLS.dataOraInvio] || "",
+        stelle: parseStelle(row[CLIENTI_COLS.stelle]),
+        commento: row[CLIENTI_COLS.commento] || "",
+        dataRecensione: row[CLIENTI_COLS.dataRecensione] || "",
       });
     }
   }
   out.sort((a, b) => (a.submittedAt < b.submittedAt ? 1 : -1));
   return out;
+}
+
+export type ClienteRecensione = {
+  rowNumber: number;
+  submissionId: string;
+  nomeCliente: string;
+  emailEsercente: string;
+  nomeAttivitaEsercente: string;
+  linkGoogleMapsEsercente: string | null;
+  giaRecensito: boolean;
+};
+
+/**
+ * Cerca un cliente per submissionId su TUTTO il foglio (non filtrato per
+ * esercente): usata dalla pagina pubblica di recensione, che riceve solo il
+ * submissionId nel link WhatsApp e non ha alcuna sessione/esercente noto.
+ */
+export async function getClienteBySubmissionId(
+  submissionId: string
+): Promise<ClienteRecensione | null> {
+  if (!submissionId) return null;
+  const sheets = sheetsClient();
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: CLIENTI_SPREADSHEET_ID,
+    range: `${CLIENTI_SHEET_NAME}!A2:N50000`,
+  });
+  const rows = res.data.values || [];
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    if ((row[CLIENTI_COLS.submissionId] || "") === submissionId) {
+      const emailEsercente = row[CLIENTI_COLS.emailEsercente] || "";
+      const esercente = emailEsercente
+        ? await getEsercenteByEmail(emailEsercente)
+        : null;
+      return {
+        rowNumber: i + 2,
+        submissionId,
+        nomeCliente: row[CLIENTI_COLS.nomeCliente] || "",
+        emailEsercente,
+        nomeAttivitaEsercente: esercente?.nomeAttivita || "",
+        linkGoogleMapsEsercente: esercente?.linkGoogleMaps || null,
+        giaRecensito: parseStelle(row[CLIENTI_COLS.stelle]) !== null,
+      };
+    }
+  }
+  return null;
+}
+
+/**
+ * Salva la recensione (stelle 1-5 ed eventuale commento) per un submissionId.
+ * Non sovrascrive una recensione già presente (evita che il link, se
+ * riaperto o inoltrato, cambi un voto già dato). Ritorna false se il
+ * cliente non esiste o ha già recensito.
+ */
+export async function salvaRecensione(
+  submissionId: string,
+  stelle: number,
+  commento: string
+): Promise<boolean> {
+  if (!submissionId || stelle < 1 || stelle > 5) return false;
+  const sheets = sheetsClient();
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: CLIENTI_SPREADSHEET_ID,
+    range: `${CLIENTI_SHEET_NAME}!A2:N50000`,
+  });
+  const rows = res.data.values || [];
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    if ((row[CLIENTI_COLS.submissionId] || "") === submissionId) {
+      if (parseStelle(row[CLIENTI_COLS.stelle]) !== null) return false; // già recensito
+      const rowNumber = i + 2;
+      const now = new Date().toISOString().slice(0, 16).replace("T", " ");
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: CLIENTI_SPREADSHEET_ID,
+        range: `${CLIENTI_SHEET_NAME}!L${rowNumber}:N${rowNumber}`,
+        valueInputOption: "RAW",
+        requestBody: { values: [[String(stelle), commento || "", now]] },
+      });
+      return true;
+    }
+  }
+  return false;
 }
 
 export type NuovoClienteInput = {
@@ -197,7 +295,11 @@ export async function addClienti(
   await sheets.spreadsheets.values.append({
     spreadsheetId: CLIENTI_SPREADSHEET_ID,
     range: `${CLIENTI_SHEET_NAME}!A1:K1`,
-    valueInputOption: "USER_ENTERED",
+    // RAW e non USER_ENTERED: con USER_ENTERED, Google Sheets interpreta un
+    // numero WhatsApp che inizia con "+" (es. "+39 333 1234567") come una
+    // formula, risultando in "#ERROR!" invece del numero. RAW scrive il
+    // valore così com'è, senza alcuna interpretazione.
+    valueInputOption: "RAW",
     insertDataOption: "INSERT_ROWS",
     requestBody: { values },
   });
@@ -209,6 +311,14 @@ export async function addClienti(
 export async function getLinkGoogleMapsEsercente(
   esercenteEmail: string
 ): Promise<string | null> {
+  const esercente = await getEsercenteByEmail(esercenteEmail);
+  return esercente?.linkGoogleMaps || null;
+}
+
+/** Recupera nome attività e link Google Maps di un esercente, per email. */
+export async function getEsercenteByEmail(
+  esercenteEmail: string
+): Promise<{ nomeAttivita: string; linkGoogleMaps: string | null } | null> {
   const sheets = sheetsClient();
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: ESERCENTI_SPREADSHEET_ID,
@@ -218,7 +328,10 @@ export async function getLinkGoogleMapsEsercente(
   const normalizedEmail = esercenteEmail.trim().toLowerCase();
   for (const row of rows) {
     if ((row[ESERCENTI_COLS.email] || "").trim().toLowerCase() === normalizedEmail) {
-      return row[ESERCENTI_COLS.linkGoogleMaps] || null;
+      return {
+        nomeAttivita: row[ESERCENTI_COLS.nomeAttivita] || "",
+        linkGoogleMaps: row[ESERCENTI_COLS.linkGoogleMaps] || null,
+      };
     }
   }
   return null;
@@ -261,6 +374,6 @@ export async function markClientiInviati(
 
   await sheets.spreadsheets.values.batchUpdate({
     spreadsheetId: CLIENTI_SPREADSHEET_ID,
-    requestBody: { valueInputOption: "USER_ENTERED", data },
+    requestBody: { valueInputOption: "RAW", data },
   });
 }
