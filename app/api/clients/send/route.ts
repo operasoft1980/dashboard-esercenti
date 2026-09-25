@@ -89,6 +89,7 @@ export async function POST(req: NextRequest) {
       emailEsercente: session.email,
       nomeCliente: client.nomeCliente,
       whatsappCliente: client.whatsappCliente,
+      submissionId: client.submissionId,
     });
 
     if (result.success) {
