@@ -14,6 +14,7 @@ export type InviaWhatsAppInput = {
   emailEsercente: string;
   nomeCliente: string;
   whatsappCliente: string;
+  submissionId: string;
 };
 
 export type InviaWhatsAppResult =
