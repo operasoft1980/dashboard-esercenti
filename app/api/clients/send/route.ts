@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { verifySessionToken, COOKIE_NAME } from "@/lib/session";
-import { getClientsForEsercente, markClientiInviati, STATO_INVIATO } from "@/lib/sheets";
+import {
+  getClientsForEsercente,
+  getEsercenteByEmail,
+  markClientiInviati,
+  isAbbonamentoAttivo,
+  STATO_INVIATO,
+} from "@/lib/sheets";
 import { inviaWhatsAppRecensione } from "@/lib/newClientHook";
 
 // Ogni invio è una chiamata sincrona al webhook Make (che manda il WhatsApp
@@ -35,6 +41,22 @@ export async function POST(req: NextRequest) {
 
   if (submissionIds.length === 0) {
     return NextResponse.json({ error: "Nessun cliente selezionato" }, { status: 400 });
+  }
+
+  // Controllo live (non dalla sessione, che può durare fino a 30 giorni):
+  // se l'abbonamento non risulta "Attivo" al momento dell'invio, blocchiamo
+  // qui, prima di contattare qualsiasi cliente. Il login resta comunque
+  // consentito: l'esercente deve poter vedere dashboard e storico anche a
+  // abbonamento scaduto, solo l'invio di nuove richieste viene disabilitato.
+  const esercente = await getEsercenteByEmail(session.email);
+  if (!esercente || !isAbbonamentoAttivo(esercente.stato)) {
+    return NextResponse.json(
+      {
+        error:
+          "Il tuo abbonamento non risulta attivo: rinnova per poter inviare nuove richieste di recensione.",
+      },
+      { status: 403 }
+    );
   }
   if (submissionIds.length > MAX_PER_REQUEST) {
     return NextResponse.json(

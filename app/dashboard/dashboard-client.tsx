@@ -71,9 +71,11 @@ function parseClientsCsv(text: string): ImportRow[] {
 export default function DashboardClient({
   nomeAttivita,
   email,
+  abbonamentoAttivo,
 }: {
   nomeAttivita: string;
   email: string;
+  abbonamentoAttivo: boolean;
 }) {
   const router = useRouter();
   const [clients, setClients] = useState<Cliente[]>([]);
@@ -353,6 +355,12 @@ export default function DashboardClient({
       </header>
 
       <main className="max-w-5xl mx-auto px-4 py-6">
+        {!abbonamentoAttivo && (
+          <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded-xl px-4 py-3 mb-6 text-sm">
+            <b>Abbonamento non attivo.</b> Puoi ancora consultare clienti e statistiche, ma
+            l'invio di nuove richieste di recensione è disabilitato finché non rinnovi.
+          </div>
+        )}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
           <div className="bg-white rounded-xl border border-gray-200 p-4">
             <p className="text-xs text-gray-500">Clienti totali</p>
@@ -479,7 +487,13 @@ export default function DashboardClient({
             </p>
             <button
               onClick={openSendModal}
-              className="bg-green-600 text-white text-sm rounded-lg px-4 py-2 hover:bg-green-700"
+              disabled={!abbonamentoAttivo}
+              title={
+                abbonamentoAttivo
+                  ? undefined
+                  : "Abbonamento non attivo: rinnova per inviare nuove richieste"
+              }
+              className="bg-green-600 text-white text-sm rounded-lg px-4 py-2 hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed disabled:hover:bg-gray-300"
             >
               Invia richiesta recensione
             </button>

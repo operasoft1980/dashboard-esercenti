@@ -92,6 +92,16 @@ export type Cliente = {
 export const STATO_NON_INVIATO = "Non inviato";
 export const STATO_INVIATO = "Inviato";
 
+// Unico valore di "Stato" esercente che consente l'invio di nuove richieste
+// di recensione (dashboard e link personale). Tutti gli altri valori
+// ("In Ritardo", "Disdetto", vuoto, ecc.) bloccano l'invio ma NON il login:
+// l'esercente deve poter sempre consultare dashboard e storico.
+export const STATO_ABBONAMENTO_ATTIVO = "Attivo";
+
+export function isAbbonamentoAttivo(stato: string | undefined | null): boolean {
+  return (stato || "").trim() === STATO_ABBONAMENTO_ATTIVO;
+}
+
 function parseStelle(value: string | undefined): number | null {
   const n = parseInt((value || "").trim(), 10);
   return Number.isFinite(n) && n >= 1 && n <= 5 ? n : null;
@@ -115,6 +125,44 @@ export async function authenticateEsercente(
     const rowEmail = (row[ESERCENTI_COLS.email] || "").trim().toLowerCase();
     const rowCode = (row[ESERCENTI_COLS.codiceAccesso] || "").trim();
     if (rowEmail === normalizedEmail && rowCode && rowCode === normalizedCode) {
+      return {
+        rowNumber: i + 2,
+        id: row[ESERCENTI_COLS.id] || "",
+        nomeAttivita: row[ESERCENTI_COLS.nomeAttivita] || "",
+        email: row[ESERCENTI_COLS.email] || "",
+        whatsapp: row[ESERCENTI_COLS.whatsapp] || "",
+        tipoAttivita: row[ESERCENTI_COLS.tipoAttivita] || "",
+        linkGoogleMaps: row[ESERCENTI_COLS.linkGoogleMaps] || "",
+        stato: row[ESERCENTI_COLS.stato] || "",
+      };
+    }
+  }
+  return null;
+}
+
+/**
+ * Carica il record esercente più recente dal foglio, per email, SENZA
+ * verificare il codice di accesso. Usata dove serve conoscere lo stato
+ * attuale dell'abbonamento (es. per bloccare l'invio di nuove richieste
+ * di recensione) indipendentemente da quanto sia vecchia la sessione di
+ * login: lo stato può cambiare (rinnovo, disdetta, mancato pagamento)
+ * mentre la sessione resta valida fino a 30 giorni.
+ */
+export async function getEsercenteByEmail(
+  email: string
+): Promise<Esercente | null> {
+  const sheets = sheetsClient();
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: ESERCENTI_SPREADSHEET_ID,
+    range: `${ESERCENTI_SHEET_NAME}!A2:P10000`,
+  });
+  const rows = res.data.values || [];
+  const normalizedEmail = email.trim().toLowerCase();
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const rowEmail = (row[ESERCENTI_COLS.email] || "").trim().toLowerCase();
+    if (rowEmail === normalizedEmail) {
       return {
         rowNumber: i + 2,
         id: row[ESERCENTI_COLS.id] || "",
@@ -313,28 +361,6 @@ export async function getLinkGoogleMapsEsercente(
 ): Promise<string | null> {
   const esercente = await getEsercenteByEmail(esercenteEmail);
   return esercente?.linkGoogleMaps || null;
-}
-
-/** Recupera nome attività e link Google Maps di un esercente, per email. */
-export async function getEsercenteByEmail(
-  esercenteEmail: string
-): Promise<{ nomeAttivita: string; linkGoogleMaps: string | null } | null> {
-  const sheets = sheetsClient();
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: ESERCENTI_SPREADSHEET_ID,
-    range: `${ESERCENTI_SHEET_NAME}!A2:H10000`,
-  });
-  const rows = res.data.values || [];
-  const normalizedEmail = esercenteEmail.trim().toLowerCase();
-  for (const row of rows) {
-    if ((row[ESERCENTI_COLS.email] || "").trim().toLowerCase() === normalizedEmail) {
-      return {
-        nomeAttivita: row[ESERCENTI_COLS.nomeAttivita] || "",
-        linkGoogleMaps: row[ESERCENTI_COLS.linkGoogleMaps] || null,
-      };
-    }
-  }
-  return null;
 }
 
 /**
