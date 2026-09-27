@@ -104,6 +104,8 @@ export default function DashboardClient({
   const [showSendModal, setShowSendModal] = useState(false);
   const [sendStep, setSendStep] = useState<"confirm" | "sending" | "done">("confirm");
   const [sendResults, setSendResults] = useState<SendResultRow[]>([]);
+  const [portalLoading, setPortalLoading] = useState(false);
+  const [portalError, setPortalError] = useState("");
 
   const loadClients = useCallback(async () => {
     setLoading(true);
@@ -145,6 +147,24 @@ export default function DashboardClient({
     await fetch("/api/logout", { method: "POST" });
     router.push("/login");
     router.refresh();
+  }
+
+  async function handleRinnovaPagamento() {
+    setPortalError("");
+    setPortalLoading(true);
+    try {
+      const res = await fetch("/api/billing/portal", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok || !data.url) {
+        setPortalError(data.error || "Impossibile aprire la pagina di pagamento.");
+        setPortalLoading(false);
+        return;
+      }
+      window.location.href = data.url;
+    } catch {
+      setPortalError("Errore di rete. Riprova.");
+      setPortalLoading(false);
+    }
   }
 
   function handleExport() {
@@ -357,8 +377,20 @@ export default function DashboardClient({
       <main className="max-w-5xl mx-auto px-4 py-6">
         {!abbonamentoAttivo && (
           <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded-xl px-4 py-3 mb-6 text-sm">
-            <b>Abbonamento non attivo.</b> Puoi ancora consultare clienti e statistiche, ma
-            l'invio di nuove richieste di recensione è disabilitato finché non rinnovi.
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <span>
+                <b>Abbonamento non attivo.</b> Puoi ancora consultare clienti e statistiche, ma
+                l'invio di nuove richieste di recensione è disabilitato finché non rinnovi.
+              </span>
+              <button
+                onClick={handleRinnovaPagamento}
+                disabled={portalLoading}
+                className="shrink-0 bg-amber-600 text-white text-sm rounded-lg px-4 py-2 hover:bg-amber-700 disabled:opacity-60"
+              >
+                {portalLoading ? "Apertura in corso..." : "Rinnova pagamento"}
+              </button>
+            </div>
+            {portalError && <p className="mt-2 text-red-700">{portalError}</p>}
           </div>
         )}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">

@@ -16,6 +16,7 @@ const ESERCENTI_COLS = {
   tipoAttivita: 5,
   linkGoogleMaps: 6,
   stato: 7,
+  stripeCustomerId: 8,
   codiceAccesso: 15,
 };
 
@@ -74,6 +75,7 @@ export type Esercente = {
   tipoAttivita: string;
   linkGoogleMaps: string;
   stato: string;
+  stripeCustomerId: string;
 };
 
 export type Cliente = {
@@ -134,6 +136,7 @@ export async function authenticateEsercente(
         tipoAttivita: row[ESERCENTI_COLS.tipoAttivita] || "",
         linkGoogleMaps: row[ESERCENTI_COLS.linkGoogleMaps] || "",
         stato: row[ESERCENTI_COLS.stato] || "",
+        stripeCustomerId: row[ESERCENTI_COLS.stripeCustomerId] || "",
       };
     }
   }
@@ -172,6 +175,7 @@ export async function getEsercenteByEmail(
         tipoAttivita: row[ESERCENTI_COLS.tipoAttivita] || "",
         linkGoogleMaps: row[ESERCENTI_COLS.linkGoogleMaps] || "",
         stato: row[ESERCENTI_COLS.stato] || "",
+        stripeCustomerId: row[ESERCENTI_COLS.stripeCustomerId] || "",
       };
     }
   }
