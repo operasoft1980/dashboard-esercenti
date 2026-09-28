@@ -178,6 +178,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, fatti });
     }
 
+    if (azione === "disattivaLink") {
+      // Disattiva un singolo link (es. un doppione). I link Stripe non si possono cancellare.
+      const id = typeof body?.id === "string" ? body.id : "";
+      const trovato = attuali.find(({ link }) => link.id === id);
+      if (!trovato) return NextResponse.json({ error: "Link attivo non trovato" }, { status: 404 });
+      await stripe.paymentLinks.update(id, { active: false });
+      return NextResponse.json({ ok: true, disattivato: trovato.link.url });
+    }
+
     return NextResponse.json({ error: "Azione non valida" }, { status: 400 });
   } catch (err) {
     console.error("Listino: operazione non riuscita", err);
