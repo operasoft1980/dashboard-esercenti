@@ -106,6 +106,8 @@ export default function DashboardClient({
   const [sendResults, setSendResults] = useState<SendResultRow[]>([]);
   const [portalLoading, setPortalLoading] = useState(false);
   const [portalError, setPortalError] = useState("");
+  const [cancelLoading, setCancelLoading] = useState(false);
+  const [cancelError, setCancelError] = useState("");
 
   const loadClients = useCallback(async () => {
     setLoading(true);
@@ -164,6 +166,34 @@ export default function DashboardClient({
     } catch {
       setPortalError("Errore di rete. Riprova.");
       setPortalLoading(false);
+    }
+  }
+
+  async function handleDisdici() {
+    const confermato = window.confirm(
+      "Vuoi disdire l'abbonamento?\n\n" +
+        "Il servizio resterà attivo fino alla fine del periodo già pagato " +
+        "(non verrà addebitato nulla in più e non ci sono penali, ma non " +
+        "c'è rimborso per il periodo in corso). Dopo la scadenza, " +
+        "l'abbonamento non si rinnoverà più.\n\n" +
+        "Nella pagina successiva potrai confermare la disdetta."
+    );
+    if (!confermato) return;
+
+    setCancelError("");
+    setCancelLoading(true);
+    try {
+      const res = await fetch("/api/billing/cancel", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok || !data.url) {
+        setCancelError(data.error || "Impossibile aprire la pagina di disdetta.");
+        setCancelLoading(false);
+        return;
+      }
+      window.location.href = data.url;
+    } catch {
+      setCancelError("Errore di rete. Riprova.");
+      setCancelLoading(false);
     }
   }
 
@@ -368,13 +398,29 @@ export default function DashboardClient({
             <h1 className="text-lg font-semibold text-gray-900">{nomeAttivita}</h1>
             <p className="text-xs text-gray-500">{email}</p>
           </div>
-          <button onClick={handleLogout} className="text-sm text-gray-500 hover:text-gray-900">
-            Esci
-          </button>
+          <div className="flex items-center gap-4">
+            {abbonamentoAttivo && (
+              <button
+                onClick={handleDisdici}
+                disabled={cancelLoading}
+                className="text-sm text-gray-400 hover:text-red-600 disabled:opacity-60"
+              >
+                {cancelLoading ? "Apertura in corso..." : "Disdici abbonamento"}
+              </button>
+            )}
+            <button onClick={handleLogout} className="text-sm text-gray-500 hover:text-gray-900">
+              Esci
+            </button>
+          </div>
         </div>
       </header>
 
       <main className="max-w-5xl mx-auto px-4 py-6">
+        {cancelError && (
+          <div className="bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 mb-6 text-sm">
+            {cancelError}
+          </div>
+        )}
         {!abbonamentoAttivo && (
           <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded-xl px-4 py-3 mb-6 text-sm">
             <div className="flex flex-wrap items-center justify-between gap-3">
