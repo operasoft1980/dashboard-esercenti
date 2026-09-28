@@ -51,7 +51,10 @@ function parametriCopia(old: Stripe.PaymentLink, priceId: string, nome: string):
     allow_promotion_codes: old.allow_promotion_codes,
     automatic_tax: { enabled: old.automatic_tax?.enabled ?? false },
     billing_address_collection: old.billing_address_collection,
-    consent_collection: old.consent_collection,
+    // "promotions" non è disponibile in Italia: Stripe lo restituisce ma lo rifiuta in creazione.
+    consent_collection: old.consent_collection
+      ? { ...old.consent_collection, promotions: old.consent_collection.promotions === "auto" ? "auto" : undefined }
+      : undefined,
     custom_fields: old.custom_fields?.length ? old.custom_fields : undefined,
     custom_text: old.custom_text,
     payment_method_collection: old.payment_method_collection,
