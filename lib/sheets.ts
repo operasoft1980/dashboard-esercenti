@@ -17,6 +17,11 @@ const ESERCENTI_COLS = {
   linkGoogleMaps: 6,
   stato: 7,
   stripeCustomerId: 8,
+  stripeSubscriptionId: 9,
+  statoPagamento: 10,
+  dataUltimoPagamento: 11,
+  dataProssimoRinnovo: 12,
+  dataUltimoFallimento: 13,
   codiceAccesso: 15,
 };
 
@@ -69,6 +74,7 @@ function sheetsClient() {
 export type Esercente = {
   rowNumber: number;
   id: string;
+  dataAttivazione: string;
   nomeAttivita: string;
   email: string;
   whatsapp: string;
@@ -76,7 +82,48 @@ export type Esercente = {
   linkGoogleMaps: string;
   stato: string;
   stripeCustomerId: string;
+  statoPagamento: string;
+  dataUltimoPagamento: string;
+  dataProssimoRinnovo: string;
+  dataUltimoFallimento: string;
 };
+
+function rowToEsercente(row: string[], index: number): Esercente {
+  const cell = (i: number) => (row[i] || "").toString().trim();
+  return {
+    rowNumber: index + 2,
+    id: cell(ESERCENTI_COLS.id),
+    dataAttivazione: cell(ESERCENTI_COLS.dataAttivazione),
+    nomeAttivita: cell(ESERCENTI_COLS.nomeAttivita),
+    email: cell(ESERCENTI_COLS.email),
+    whatsapp: cell(ESERCENTI_COLS.whatsapp),
+    tipoAttivita: cell(ESERCENTI_COLS.tipoAttivita),
+    linkGoogleMaps: cell(ESERCENTI_COLS.linkGoogleMaps),
+    stato: cell(ESERCENTI_COLS.stato),
+    stripeCustomerId: cell(ESERCENTI_COLS.stripeCustomerId),
+    statoPagamento: cell(ESERCENTI_COLS.statoPagamento),
+    dataUltimoPagamento: cell(ESERCENTI_COLS.dataUltimoPagamento),
+    dataProssimoRinnovo: cell(ESERCENTI_COLS.dataProssimoRinnovo),
+    dataUltimoFallimento: cell(ESERCENTI_COLS.dataUltimoFallimento),
+  };
+}
+
+async function readEsercentiRows(): Promise<string[][]> {
+  const sheets = sheetsClient();
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: ESERCENTI_SPREADSHEET_ID,
+    range: `${ESERCENTI_SHEET_NAME}!A2:P10000`,
+  });
+  return (res.data.values || []) as string[][];
+}
+
+/** Tutti gli esercenti del foglio (righe con email), per l'area admin. */
+export async function getAllEsercenti(): Promise<Esercente[]> {
+  const rows = await readEsercentiRows();
+  return rows
+    .map((row, i) => rowToEsercente(row, i))
+    .filter((e) => e.email.length > 0);
+}
 
 export type Cliente = {
   rowNumber: number;
@@ -113,12 +160,7 @@ export async function authenticateEsercente(
   email: string,
   codiceAccesso: string
 ): Promise<Esercente | null> {
-  const sheets = sheetsClient();
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: ESERCENTI_SPREADSHEET_ID,
-    range: `${ESERCENTI_SHEET_NAME}!A2:P10000`,
-  });
-  const rows = res.data.values || [];
+  const rows = await readEsercentiRows();
   const normalizedEmail = email.trim().toLowerCase();
   const normalizedCode = codiceAccesso.trim();
 
@@ -127,17 +169,7 @@ export async function authenticateEsercente(
     const rowEmail = (row[ESERCENTI_COLS.email] || "").trim().toLowerCase();
     const rowCode = (row[ESERCENTI_COLS.codiceAccesso] || "").trim();
     if (rowEmail === normalizedEmail && rowCode && rowCode === normalizedCode) {
-      return {
-        rowNumber: i + 2,
-        id: row[ESERCENTI_COLS.id] || "",
-        nomeAttivita: row[ESERCENTI_COLS.nomeAttivita] || "",
-        email: row[ESERCENTI_COLS.email] || "",
-        whatsapp: row[ESERCENTI_COLS.whatsapp] || "",
-        tipoAttivita: row[ESERCENTI_COLS.tipoAttivita] || "",
-        linkGoogleMaps: row[ESERCENTI_COLS.linkGoogleMaps] || "",
-        stato: row[ESERCENTI_COLS.stato] || "",
-        stripeCustomerId: row[ESERCENTI_COLS.stripeCustomerId] || "",
-      };
+      return rowToEsercente(row, i);
     }
   }
   return null;
@@ -154,29 +186,14 @@ export async function authenticateEsercente(
 export async function getEsercenteByEmail(
   email: string
 ): Promise<Esercente | null> {
-  const sheets = sheetsClient();
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: ESERCENTI_SPREADSHEET_ID,
-    range: `${ESERCENTI_SHEET_NAME}!A2:P10000`,
-  });
-  const rows = res.data.values || [];
+  const rows = await readEsercentiRows();
   const normalizedEmail = email.trim().toLowerCase();
 
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
     const rowEmail = (row[ESERCENTI_COLS.email] || "").trim().toLowerCase();
     if (rowEmail === normalizedEmail) {
-      return {
-        rowNumber: i + 2,
-        id: row[ESERCENTI_COLS.id] || "",
-        nomeAttivita: row[ESERCENTI_COLS.nomeAttivita] || "",
-        email: row[ESERCENTI_COLS.email] || "",
-        whatsapp: row[ESERCENTI_COLS.whatsapp] || "",
-        tipoAttivita: row[ESERCENTI_COLS.tipoAttivita] || "",
-        linkGoogleMaps: row[ESERCENTI_COLS.linkGoogleMaps] || "",
-        stato: row[ESERCENTI_COLS.stato] || "",
-        stripeCustomerId: row[ESERCENTI_COLS.stripeCustomerId] || "",
-      };
+      return rowToEsercente(row, i);
     }
   }
   return null;
@@ -214,6 +231,31 @@ export async function getClientsForEsercente(
   }
   out.sort((a, b) => (a.submittedAt < b.submittedAt ? 1 : -1));
   return out;
+}
+
+export type ClienteConEsercente = Cliente & { emailEsercente: string };
+
+/** Tutti i clienti di tutti gli esercenti (una sola lettura), per l'area admin. */
+export async function getAllClienti(): Promise<ClienteConEsercente[]> {
+  const sheets = sheetsClient();
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: CLIENTI_SPREADSHEET_ID,
+    range: `${CLIENTI_SHEET_NAME}!A2:N50000`,
+  });
+  const rows = res.data.values || [];
+  return rows.map((row, i) => ({
+    rowNumber: i + 2,
+    submissionId: row[CLIENTI_COLS.submissionId] || "",
+    nomeCliente: row[CLIENTI_COLS.nomeCliente] || "",
+    whatsappCliente: row[CLIENTI_COLS.whatsappCliente] || "",
+    submittedAt: row[CLIENTI_COLS.submittedAt] || "",
+    stato: row[CLIENTI_COLS.stato] || "",
+    dataOraInvio: row[CLIENTI_COLS.dataOraInvio] || "",
+    stelle: parseStelle(row[CLIENTI_COLS.stelle]),
+    commento: row[CLIENTI_COLS.commento] || "",
+    dataRecensione: row[CLIENTI_COLS.dataRecensione] || "",
+    emailEsercente: (row[CLIENTI_COLS.emailEsercente] || "").trim().toLowerCase(),
+  }));
 }
 
 export type ClienteRecensione = {

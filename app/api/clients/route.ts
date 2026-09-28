@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { verifySessionToken, COOKIE_NAME } from "@/lib/session";
-import { getClientsForEsercente, addClienti } from "@/lib/sheets";
+import { getClientsForEsercente, addClienti, STATO_INVIATO } from "@/lib/sheets";
+import { applyClientFilters, filtersFromSearchParams } from "@/lib/clientFilters";
 
 export async function GET(req: NextRequest) {
   const cookieStore = await cookies();
@@ -12,24 +13,23 @@ export async function GET(req: NextRequest) {
   }
 
   const clients = await getClientsForEsercente(session.email);
-
   const { searchParams } = new URL(req.url);
-  const stato = searchParams.get("stato");
-  const dataDa = searchParams.get("dataDa");
-  const dataA = searchParams.get("dataA");
+  const filtered = applyClientFilters(clients, filtersFromSearchParams(searchParams));
 
-  let filtered = clients;
-  if (stato) {
-    filtered = filtered.filter((c) => c.stato === stato);
-  }
-  if (dataDa) {
-    filtered = filtered.filter((c) => c.submittedAt >= dataDa);
-  }
-  if (dataA) {
-    filtered = filtered.filter((c) => c.submittedAt <= dataA);
-  }
+  // Riepilogo su TUTTI i clienti dell'esercente (non filtrato): sono i
+  // contatori "in tempo reale" in cima alla dashboard.
+  const inviati = clients.filter((c) => c.stato === STATO_INVIATO).length;
+  const recensioni = clients.filter((c) => c.stelle !== null);
+  const sommaStelle = recensioni.reduce((s, c) => s + (c.stelle || 0), 0);
+  const summary = {
+    totale: clients.length,
+    inviati,
+    recensiti: recensioni.length,
+    positive: recensioni.filter((c) => (c.stelle || 0) >= 4).length,
+    mediaStelle: recensioni.length ? sommaStelle / recensioni.length : null,
+  };
 
-  return NextResponse.json({ clients: filtered, total: clients.length });
+  return NextResponse.json({ clients: filtered, total: clients.length, summary });
 }
 
 /**

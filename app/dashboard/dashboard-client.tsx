@@ -2,6 +2,34 @@
 
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { useRouter } from "next/navigation";
+import { FILTRI_STELLE } from "@/lib/clientFilters";
+import { formatDataIt, giorniDaOggi } from "@/lib/dates";
+
+export type AbbonamentoView = {
+  stato: string;
+  statoPagamento: string;
+  dataUltimoPagamento: string;
+  dataProssimoRinnovo: string;
+  dataUltimoFallimento: string;
+  piano: string;
+  importo: number | null;
+  stripeStatus: string;
+  inProva: boolean;
+  fineProva: string | null;
+  disdettaProgrammata: boolean;
+  fineAccesso: string | null;
+  prossimoRinnovoStripe: string | null;
+};
+
+type Summary = {
+  totale: number;
+  inviati: number;
+  recensiti: number;
+  positive: number;
+  mediaStelle: number | null;
+};
+
+const REFRESH_MS = 60_000;
 
 type Cliente = {
   rowNumber: number;
@@ -72,10 +100,12 @@ export default function DashboardClient({
   nomeAttivita,
   email,
   abbonamentoAttivo,
+  abbonamento,
 }: {
   nomeAttivita: string;
   email: string;
   abbonamentoAttivo: boolean;
+  abbonamento: AbbonamentoView;
 }) {
   const router = useRouter();
   const [clients, setClients] = useState<Cliente[]>([]);
@@ -84,7 +114,13 @@ export default function DashboardClient({
   const [stato, setStato] = useState("");
   const [dataDa, setDataDa] = useState("");
   const [dataA, setDataA] = useState("");
+  const [stelle, setStelle] = useState("");
+  const [cercaInput, setCercaInput] = useState("");
+  const [cerca, setCerca] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [summary, setSummary] = useState<Summary | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [exporting, setExporting] = useState<"" | "xlsx" | "pdf">("");
 
   // --- Aggiunta singolo cliente ---
   const [showAddModal, setShowAddModal] = useState(false);
@@ -109,26 +145,73 @@ export default function DashboardClient({
   const [cancelLoading, setCancelLoading] = useState(false);
   const [cancelError, setCancelError] = useState("");
 
-  const loadClients = useCallback(async () => {
-    setLoading(true);
+  const filterParams = useCallback(() => {
     const params = new URLSearchParams();
     if (stato) params.set("stato", stato);
     if (dataDa) params.set("dataDa", dataDa);
     if (dataA) params.set("dataA", dataA);
-    const res = await fetch(`/api/clients?${params.toString()}`);
-    if (res.status === 401) {
-      router.push("/login");
-      return;
-    }
-    const data = await res.json();
-    setClients(data.clients || []);
-    setTotal(data.total || 0);
-    setLoading(false);
-  }, [stato, dataDa, dataA, router]);
+    if (stelle) params.set("stelle", stelle);
+    if (cerca) params.set("cerca", cerca);
+    return params;
+  }, [stato, dataDa, dataA, stelle, cerca]);
+
+  // silent = aggiornamento automatico in background: niente "Caricamento…"
+  // e la selezione resta (tolti solo i clienti non più presenti).
+  const loadClients = useCallback(
+    async (silent = false) => {
+      if (!silent) setLoading(true);
+      try {
+        const res = await fetch(`/api/clients?${filterParams().toString()}`, { cache: "no-store" });
+        if (res.status === 401) {
+          router.push("/login");
+          return;
+        }
+        const data = await res.json();
+        const nuovi: Cliente[] = data.clients || [];
+        setClients(nuovi);
+        setTotal(data.total || 0);
+        setSummary(data.summary || null);
+        setLastUpdated(new Date());
+        if (silent) {
+          const ids = new Set(nuovi.map((c) => c.submissionId));
+          setSelected((prev) => new Set(Array.from(prev).filter((id) => ids.has(id))));
+        }
+      } catch {
+        // rete assente: si riprova al prossimo giro
+      } finally {
+        if (!silent) setLoading(false);
+      }
+    },
+    [filterParams, router]
+  );
 
   useEffect(() => {
     loadClients();
   }, [loadClients]);
+
+  // Aggiornamento automatico: ogni minuto, e subito quando si torna sulla scheda.
+  useEffect(() => {
+    const tick = () => {
+      if (document.visibilityState === "visible") loadClients(true);
+    };
+    const id = window.setInterval(tick, REFRESH_MS);
+    document.addEventListener("visibilitychange", tick);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", tick);
+    };
+  }, [loadClients]);
+
+  // Ricerca per nome/numero: parte 400 ms dopo l'ultima lettera digitata.
+  useEffect(() => {
+    const id = window.setTimeout(() => {
+      if (cercaInput.trim() !== cerca) {
+        setCerca(cercaInput.trim());
+        setSelected(new Set());
+      }
+    }, 400);
+    return () => window.clearTimeout(id);
+  }, [cercaInput, cerca]);
 
   // Le selezioni non hanno più senso se cambiano i filtri: le puliamo quando
   // l'esercente cambia un filtro (non in un effect, per evitare render a cascata).
@@ -144,6 +227,20 @@ export default function DashboardClient({
     setDataA(value);
     setSelected(new Set());
   }
+  function updateStelle(value: string) {
+    setStelle(value);
+    setSelected(new Set());
+  }
+  function resetFiltri() {
+    setStato("");
+    setDataDa("");
+    setDataA("");
+    setStelle("");
+    setCercaInput("");
+    setCerca("");
+    setSelected(new Set());
+  }
+  const filtriAttivi = !!(stato || dataDa || dataA || stelle || cerca);
 
   async function handleLogout() {
     await fetch("/api/logout", { method: "POST" });
@@ -197,16 +294,105 @@ export default function DashboardClient({
     }
   }
 
-  function handleExport() {
-    const params = new URLSearchParams();
-    if (stato) params.set("stato", stato);
-    if (dataDa) params.set("dataDa", dataDa);
-    if (dataA) params.set("dataA", dataA);
-    window.location.href = `/api/export?${params.toString()}`;
+  // Righe da esportare: i selezionati se ce ne sono, altrimenti tutto
+  // l'elenco filtrato mostrato a video.
+  const righeExport = useMemo(
+    () => (selected.size > 0 ? clients.filter((c) => selected.has(c.submissionId)) : clients),
+    [clients, selected]
+  );
+
+  function scaricaBlob(blob: Blob, fileName: string) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
   }
 
-  const statiUnici = Array.from(new Set(clients.map((c) => c.stato))).filter(Boolean);
-  const selezionabili = useMemo(() => clients.filter((c) => c.stato !== STATO_INVIATO), [clients]);
+  const baseFileName = `clienti_${nomeAttivita.replace(/[^a-z0-9]/gi, "_")}`;
+
+  async function handleExportExcel() {
+    if (righeExport.length === 0) return;
+    setExporting("xlsx");
+    try {
+      const res = await fetch("/api/export", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          submissionIds: righeExport.map((c) => c.submissionId),
+        }),
+      });
+      if (res.status === 401) {
+        router.push("/login");
+        return;
+      }
+      if (!res.ok) throw new Error();
+      scaricaBlob(await res.blob(), `${baseFileName}.xlsx`);
+    } catch {
+      alert("Download Excel non riuscito, riprova.");
+    } finally {
+      setExporting("");
+    }
+  }
+
+  async function handleExportPdf() {
+    if (righeExport.length === 0) return;
+    setExporting("pdf");
+    try {
+      const [{ jsPDF }, { default: autoTable }] = await Promise.all([
+        import("jspdf"),
+        import("jspdf-autotable"),
+      ]);
+      const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+      doc.setFontSize(14);
+      doc.text(`${nomeAttivita} - Elenco clienti`, 14, 15);
+      doc.setFontSize(9);
+      doc.setTextColor(100);
+      const descr: string[] = [];
+      if (selected.size > 0) descr.push(`${selected.size} selezionati`);
+      else {
+        if (stato) descr.push(`Stato: ${stato}`);
+        if (stelle) descr.push(`Recensione: ${FILTRI_STELLE.find((f) => f.value === stelle)?.label || stelle}`);
+        if (dataDa) descr.push(`Da: ${formatDataIt(dataDa)}`);
+        if (dataA) descr.push(`A: ${formatDataIt(dataA)}`);
+        if (cerca) descr.push(`Ricerca: "${cerca}"`);
+      }
+      doc.text(
+        `Generato il ${formatDataIt(new Date(), true)} - ${righeExport.length} clienti` +
+          (descr.length ? ` - ${descr.join(" - ")}` : ""),
+        14,
+        21
+      );
+      autoTable(doc, {
+        startY: 26,
+        head: [["Cliente", "WhatsApp", "Registrato", "Stato", "Invio", "Stelle", "Commento", "Recensito il"]],
+        body: righeExport.map((c) => [
+          c.nomeCliente,
+          c.whatsappCliente,
+          formatDataIt(c.submittedAt, true),
+          c.stato || "-",
+          c.dataOraInvio ? formatDataIt(c.dataOraInvio, true) : "-",
+          c.stelle ? `${c.stelle}/5` : "-",
+          c.commento || "",
+          c.dataRecensione ? formatDataIt(c.dataRecensione, true) : "-",
+        ]),
+        styles: { fontSize: 8, cellPadding: 1.8, overflow: "linebreak" },
+        headStyles: { fillColor: [31, 174, 88] },
+        columnStyles: { 6: { cellWidth: 70 } },
+      });
+      doc.save(`${baseFileName}.pdf`);
+    } catch {
+      alert("Creazione PDF non riuscita, riprova.");
+    } finally {
+      setExporting("");
+    }
+  }
+
+  const statiUnici = Array.from(new Set([STATO_INVIATO, "Non inviato", ...clients.map((c) => c.stato)])).filter(Boolean);
+  const selezionabili = clients;
 
   // Statistiche calcolate sui risultati attualmente filtrati (stato/data),
   // non su tutti i clienti dell'esercente: cambiano insieme ai filtri sopra.
@@ -234,6 +420,10 @@ export default function DashboardClient({
 
   function toggleSelectAll() {
     setSelected(tuttiSelezionati ? new Set() : new Set(selezionabili.map((c) => c.submissionId)));
+  }
+
+  function selezionaSoloNonInviati() {
+    setSelected(new Set(clients.filter((c) => c.stato !== STATO_INVIATO).map((c) => c.submissionId)));
   }
 
   function rowColorClass(c: Cliente) {
@@ -361,7 +551,10 @@ export default function DashboardClient({
     setShowSendModal(true);
   }
 
-  const clientiDaInviare = clients.filter((c) => selected.has(c.submissionId));
+  // Si inviano solo i selezionati non ancora contattati (mai reinvii).
+  const clientiDaInviare = clients.filter(
+    (c) => selected.has(c.submissionId) && c.stato !== STATO_INVIATO
+  );
 
   async function handleSendConfirm() {
     setSendStep("sending");
@@ -369,7 +562,7 @@ export default function DashboardClient({
       const res = await fetch("/api/clients/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ submissionIds: Array.from(selected) }),
+        body: JSON.stringify({ submissionIds: clientiDaInviare.map((c) => c.submissionId) }),
       });
       const data = await res.json();
       setSendResults(data.results || []);
@@ -393,13 +586,13 @@ export default function DashboardClient({
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white border-b border-gray-200">
-        <div className="max-w-5xl mx-auto px-4 py-4 flex items-center justify-between">
+        <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
           <div>
             <h1 className="text-lg font-semibold text-gray-900">{nomeAttivita}</h1>
             <p className="text-xs text-gray-500">{email}</p>
           </div>
           <div className="flex items-center gap-4">
-            {abbonamentoAttivo && (
+            {abbonamentoAttivo && !abbonamento.disdettaProgrammata && (
               <button
                 onClick={handleDisdici}
                 disabled={cancelLoading}
@@ -415,44 +608,59 @@ export default function DashboardClient({
         </div>
       </header>
 
-      <main className="max-w-5xl mx-auto px-4 py-6">
+      <main className="max-w-6xl mx-auto px-4 py-6">
         {cancelError && (
           <div className="bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 mb-6 text-sm">
             {cancelError}
           </div>
         )}
-        {!abbonamentoAttivo && (
-          <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded-xl px-4 py-3 mb-6 text-sm">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <span>
-                <b>Abbonamento non attivo.</b> Puoi ancora consultare clienti e statistiche, ma
-                l'invio di nuove richieste di recensione è disabilitato finché non rinnovi.
-              </span>
-              <button
-                onClick={handleRinnovaPagamento}
-                disabled={portalLoading}
-                className="shrink-0 bg-amber-600 text-white text-sm rounded-lg px-4 py-2 hover:bg-amber-700 disabled:opacity-60"
-              >
-                {portalLoading ? "Apertura in corso..." : "Rinnova pagamento"}
-              </button>
-            </div>
-            {portalError && <p className="mt-2 text-red-700">{portalError}</p>}
-          </div>
-        )}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
-          <div className="bg-white rounded-xl border border-gray-200 p-4">
-            <p className="text-xs text-gray-500">Clienti totali</p>
-            <p className="text-2xl font-semibold text-gray-900">{total}</p>
-          </div>
-          <div className="bg-white rounded-xl border border-gray-200 p-4">
-            <p className="text-xs text-gray-500">Risultati filtrati</p>
-            <p className="text-2xl font-semibold text-gray-900">{clients.length}</p>
-          </div>
+
+        <AbbonamentoBox
+          abbonamento={abbonamento}
+          attivo={abbonamentoAttivo}
+          onRinnova={handleRinnovaPagamento}
+          portalLoading={portalLoading}
+          portalError={portalError}
+        />
+
+        {/* Contatori su tutti i clienti, aggiornati automaticamente */}
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-xs text-gray-500">
+            Riepilogo generale
+            {lastUpdated && <> · aggiornato alle {lastUpdated.toLocaleTimeString("it-IT")}</>}
+          </p>
+          <button
+            onClick={() => loadClients(true)}
+            className="text-xs text-gray-500 hover:text-gray-900 underline"
+          >
+            Aggiorna ora
+          </button>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-6">
+          <Kpi label="Clienti totali" value={summary ? String(summary.totale) : String(total)} />
+          <Kpi label="Richieste inviate" value={summary ? String(summary.inviati) : "—"} />
+          <Kpi
+            label="Hanno recensito"
+            value={summary ? String(summary.recensiti) : "—"}
+            sub={
+              summary && summary.inviati > 0
+                ? `${Math.round((summary.recensiti / summary.inviati) * 100)}% degli inviati`
+                : undefined
+            }
+          />
+          <Kpi
+            label="Recensioni 4–5★ (Google)"
+            value={summary ? String(summary.positive) : "—"}
+          />
+          <Kpi
+            label="Media stelle"
+            value={summary?.mediaStelle != null ? summary.mediaStelle.toFixed(1).replace(".", ",") : "—"}
+          />
         </div>
 
         <div className="bg-white rounded-xl border border-gray-200 p-4 mb-6">
           <p className="text-xs text-gray-500 mb-3">
-            Statistiche sui {stats.totale} risultati filtrati sopra
+            Statistiche sui {stats.totale} risultati filtrati sotto
           </p>
           <div className="flex flex-wrap gap-4 mb-4">
             <StatCircle
@@ -479,69 +687,101 @@ export default function DashboardClient({
           </div>
           <div>
             <p className="text-xs text-gray-500 mb-2">
-              Distribuzione voti (dalla 4 in su vanno su Google, sotto restano privati)
+              Distribuzione voti (dalla 4 in su vanno su Google, sotto restano privati). Clicca un
+              voto per filtrare.
             </p>
             <div className="flex flex-wrap gap-3">
               {stats.perStella.map((count, i) => {
                 const n = i + 1;
                 const pubblica = n >= 4;
+                const attivo = stelle === String(n);
                 return (
-                  <StatCircle
+                  <button
                     key={n}
-                    label={`${n}${"⭐"}`}
-                    value={count}
-                    total={stats.recensiti}
-                    colorClass={pubblica ? "text-amber-500" : "text-gray-400"}
-                    trackClass={pubblica ? "text-amber-100" : "text-gray-100"}
-                    size={64}
-                  />
+                    onClick={() => updateStelle(attivo ? "" : String(n))}
+                    className={`rounded-lg p-1 ${attivo ? "ring-2 ring-amber-400 bg-amber-50" : "hover:bg-gray-50"}`}
+                    title={attivo ? "Togli filtro" : `Mostra solo ${n} stelle`}
+                  >
+                    <StatCircle
+                      label={`${n}${"⭐"}`}
+                      value={count}
+                      total={stats.recensiti}
+                      colorClass={pubblica ? "text-amber-500" : "text-gray-400"}
+                      trackClass={pubblica ? "text-amber-100" : "text-gray-100"}
+                      size={64}
+                    />
+                  </button>
                 );
               })}
             </div>
           </div>
         </div>
 
-        <div className="bg-white rounded-xl border border-gray-200 p-4 mb-4 flex flex-wrap gap-3 items-end">
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">Stato</label>
-            <select
-              value={stato}
-              onChange={(e) => updateStato(e.target.value)}
-              className="rounded-lg border border-gray-300 text-sm px-3 py-1.5"
-            >
-              <option value="">Tutti</option>
-              {statiUnici.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
+        <div className="bg-white rounded-xl border border-gray-200 p-4 mb-4">
+          <div className="flex flex-wrap gap-3 items-end">
+            <div className="grow min-w-[180px]">
+              <label className="block text-xs text-gray-500 mb-1">Cerca</label>
+              <input
+                value={cercaInput}
+                onChange={(e) => setCercaInput(e.target.value)}
+                placeholder="Nome o numero…"
+                className="w-full rounded-lg border border-gray-300 text-sm px-3 py-1.5"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Stato invio</label>
+              <select
+                value={stato}
+                onChange={(e) => updateStato(e.target.value)}
+                className="rounded-lg border border-gray-300 text-sm px-3 py-1.5"
+              >
+                <option value="">Tutti</option>
+                {statiUnici.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Recensione</label>
+              <select
+                value={stelle}
+                onChange={(e) => updateStelle(e.target.value)}
+                className="rounded-lg border border-gray-300 text-sm px-3 py-1.5"
+              >
+                {FILTRI_STELLE.map((f) => (
+                  <option key={f.value} value={f.value}>
+                    {f.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Registrati dal</label>
+              <input
+                type="date"
+                value={dataDa}
+                onChange={(e) => updateDataDa(e.target.value)}
+                className="rounded-lg border border-gray-300 text-sm px-3 py-1.5"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">al</label>
+              <input
+                type="date"
+                value={dataA}
+                onChange={(e) => updateDataA(e.target.value)}
+                className="rounded-lg border border-gray-300 text-sm px-3 py-1.5"
+              />
+            </div>
+            {filtriAttivi && (
+              <button onClick={resetFiltri} className="text-sm text-gray-500 hover:text-gray-900 underline pb-1.5">
+                Azzera filtri
+              </button>
+            )}
           </div>
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">Da</label>
-            <input
-              type="date"
-              value={dataDa}
-              onChange={(e) => updateDataDa(e.target.value)}
-              className="rounded-lg border border-gray-300 text-sm px-3 py-1.5"
-            />
-          </div>
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">A</label>
-            <input
-              type="date"
-              value={dataA}
-              onChange={(e) => updateDataA(e.target.value)}
-              className="rounded-lg border border-gray-300 text-sm px-3 py-1.5"
-            />
-          </div>
-          <div className="ml-auto flex gap-2">
-            <button
-              onClick={openImportModal}
-              className="bg-white border border-gray-300 text-gray-700 text-sm rounded-lg px-4 py-2 hover:bg-gray-50"
-            >
-              Importa CSV
-            </button>
+          <div className="flex flex-wrap gap-2 mt-4 pt-4 border-t border-gray-100">
             <button
               onClick={openAddModal}
               className="bg-white border border-gray-300 text-gray-700 text-sm rounded-lg px-4 py-2 hover:bg-gray-50"
@@ -549,36 +789,66 @@ export default function DashboardClient({
               + Aggiungi cliente
             </button>
             <button
-              onClick={handleExport}
-              className="bg-gray-900 text-white text-sm rounded-lg px-4 py-2 hover:bg-gray-800"
+              onClick={openImportModal}
+              className="bg-white border border-gray-300 text-gray-700 text-sm rounded-lg px-4 py-2 hover:bg-gray-50"
             >
-              Scarica Excel
+              Importa CSV
             </button>
+            <div className="ml-auto flex gap-2 items-center">
+              <span className="text-xs text-gray-500">
+                Scarica {selected.size > 0 ? `${selected.size} selezionati` : `elenco (${clients.length})`}:
+              </span>
+              <button
+                onClick={handleExportExcel}
+                disabled={!!exporting || righeExport.length === 0}
+                className="bg-gray-900 text-white text-sm rounded-lg px-4 py-2 hover:bg-gray-800 disabled:opacity-50"
+              >
+                {exporting === "xlsx" ? "Preparo…" : "Excel"}
+              </button>
+              <button
+                onClick={handleExportPdf}
+                disabled={!!exporting || righeExport.length === 0}
+                className="bg-gray-900 text-white text-sm rounded-lg px-4 py-2 hover:bg-gray-800 disabled:opacity-50"
+              >
+                {exporting === "pdf" ? "Preparo…" : "PDF"}
+              </button>
+            </div>
           </div>
         </div>
 
         {selected.size > 0 && (
-          <div className="bg-white rounded-xl border border-gray-200 p-3 mb-4 flex items-center justify-between">
+          <div className="bg-white rounded-xl border border-gray-200 p-3 mb-4 flex flex-wrap items-center gap-3 justify-between">
             <p className="text-sm text-gray-700">
-              <b>{selected.size}</b> client{selected.size === 1 ? "e" : "i"} selezionat
-              {selected.size === 1 ? "o" : "i"}
+              <b>{selected.size}</b> selezionat{selected.size === 1 ? "o" : "i"}
+              {clientiDaInviare.length !== selected.size && (
+                <span className="text-gray-500">
+                  {" "}
+                  · {clientiDaInviare.length} ancora da inviare (i già inviati non vengono mai
+                  ricontattati)
+                </span>
+              )}
+              <button onClick={() => setSelected(new Set())} className="ml-3 text-xs text-gray-500 underline">
+                Deseleziona
+              </button>
             </p>
             <button
               onClick={openSendModal}
-              disabled={!abbonamentoAttivo}
+              disabled={!abbonamentoAttivo || clientiDaInviare.length === 0}
               title={
-                abbonamentoAttivo
-                  ? undefined
-                  : "Abbonamento non attivo: rinnova per inviare nuove richieste"
+                !abbonamentoAttivo
+                  ? "Abbonamento non attivo: rinnova per inviare nuove richieste"
+                  : clientiDaInviare.length === 0
+                  ? "Tutti i selezionati hanno già ricevuto la richiesta"
+                  : undefined
               }
               className="bg-green-600 text-white text-sm rounded-lg px-4 py-2 hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed disabled:hover:bg-gray-300"
             >
-              Invia richiesta recensione
+              Invia richiesta recensione ({clientiDaInviare.length})
             </button>
           </div>
         )}
 
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 text-gray-500 text-xs uppercase">
               <tr>
@@ -588,7 +858,7 @@ export default function DashboardClient({
                     checked={tuttiSelezionati}
                     onChange={toggleSelectAll}
                     disabled={selezionabili.length === 0}
-                    title="Seleziona tutti (solo non inviati)"
+                    title="Seleziona tutti quelli in elenco"
                   />
                 </th>
                 <th className="text-left px-4 py-3">Cliente</th>
@@ -596,55 +866,80 @@ export default function DashboardClient({
                 <th className="text-left px-4 py-3">Registrato il</th>
                 <th className="text-left px-4 py-3">Stato</th>
                 <th className="text-left px-4 py-3">Invio</th>
+                <th className="text-left px-4 py-3">Recensione</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {loading ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-gray-400">
+                  <td colSpan={7} className="px-4 py-8 text-center text-gray-400">
                     Caricamento…
                   </td>
                 </tr>
               ) : clients.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-gray-400">
+                  <td colSpan={7} className="px-4 py-8 text-center text-gray-400">
                     Nessun cliente trovato
                   </td>
                 </tr>
               ) : (
-                clients.map((c) => {
-                  const inviato = c.stato === STATO_INVIATO;
-                  return (
-                    <tr key={c.rowNumber} className={rowColorClass(c)}>
-                      <td className="px-4 py-3">
-                        <input
-                          type="checkbox"
-                          checked={selected.has(c.submissionId)}
-                          disabled={inviato}
-                          onChange={() => toggleSelect(c.submissionId)}
-                          title={inviato ? "Già inviato: non selezionabile" : ""}
-                        />
-                      </td>
-                      <td className="px-4 py-3 font-medium text-gray-900">{c.nomeCliente}</td>
-                      <td className="px-4 py-3 text-gray-600">{c.whatsappCliente}</td>
-                      <td className="px-4 py-3 text-gray-600">{c.submittedAt}</td>
-                      <td className="px-4 py-3">
-                        <span
-                          className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${statoBadgeClass(
-                            c.stato
-                          )}`}
-                        >
-                          {c.stato || "—"}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-gray-600">{c.dataOraInvio || "—"}</td>
-                    </tr>
-                  );
-                })
+                clients.map((c) => (
+                  <tr
+                    key={c.rowNumber}
+                    className={`${rowColorClass(c)} ${selected.has(c.submissionId) ? "outline outline-2 -outline-offset-2 outline-blue-300" : ""}`}
+                  >
+                    <td className="px-4 py-3">
+                      <input
+                        type="checkbox"
+                        checked={selected.has(c.submissionId)}
+                        onChange={() => toggleSelect(c.submissionId)}
+                      />
+                    </td>
+                    <td className="px-4 py-3 font-medium text-gray-900">{c.nomeCliente}</td>
+                    <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{c.whatsappCliente}</td>
+                    <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{formatDataIt(c.submittedAt, true)}</td>
+                    <td className="px-4 py-3">
+                      <span
+                        className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${statoBadgeClass(c.stato)}`}
+                      >
+                        {c.stato || "—"}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
+                      {c.dataOraInvio ? formatDataIt(c.dataOraInvio, true) : "—"}
+                    </td>
+                    <td className="px-4 py-3">
+                      {c.stelle ? (
+                        <div>
+                          <span className={c.stelle >= 4 ? "text-amber-500" : "text-gray-400"}>
+                            {"★".repeat(c.stelle)}
+                            <span className="text-gray-200">{"★".repeat(5 - c.stelle)}</span>
+                          </span>
+                          {c.commento && (
+                            <p className="text-xs text-gray-500 max-w-[260px] truncate" title={c.commento}>
+                              “{c.commento}”
+                            </p>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-gray-400">—</span>
+                      )}
+                    </td>
+                  </tr>
+                ))
               )}
             </tbody>
           </table>
         </div>
+        {clients.some((c) => c.stato !== STATO_INVIATO) && (
+          <p className="text-xs text-gray-500 mt-2">
+            Suggerimento:{" "}
+            <button onClick={selezionaSoloNonInviati} className="underline hover:text-gray-900">
+              seleziona solo i non inviati
+            </button>{" "}
+            per mandare le richieste in un colpo.
+          </p>
+        )}
       </main>
 
       {/* --- Modale: aggiungi singolo cliente --- */}
@@ -953,6 +1248,115 @@ function StatCircle({
         </div>
       </div>
       <span className="text-[11px] text-gray-500 mt-1 text-center leading-tight">{label}</span>
+    </div>
+  );
+}
+
+function Kpi({ label, value, sub }: { label: string; value: string; sub?: string }) {
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 p-4">
+      <p className="text-xs text-gray-500">{label}</p>
+      <p className="text-2xl font-semibold text-gray-900">{value}</p>
+      {sub && <p className="text-[11px] text-gray-500 mt-0.5">{sub}</p>}
+    </div>
+  );
+}
+
+/** Riquadro "Il tuo abbonamento": stato, piano, prova, rinnovo, ritardi, disdetta. */
+function AbbonamentoBox({
+  abbonamento: a,
+  attivo,
+  onRinnova,
+  portalLoading,
+  portalError,
+}: {
+  abbonamento: AbbonamentoView;
+  attivo: boolean;
+  onRinnova: () => void;
+  portalLoading: boolean;
+  portalError: string;
+}) {
+  const inRitardo =
+    a.stripeStatus === "past_due" ||
+    a.stripeStatus === "unpaid" ||
+    a.statoPagamento.toLowerCase() === "non pagato" ||
+    a.stato.toLowerCase() === "in ritardo";
+  const rinnovo = a.prossimoRinnovoStripe || a.dataProssimoRinnovo;
+  const giorni = giorniDaOggi(rinnovo);
+
+  let tono = "border-green-200 bg-green-50";
+  let titolo = "Abbonamento attivo";
+  if (!attivo) {
+    tono = "border-amber-200 bg-amber-50";
+    titolo = a.stato ? `Abbonamento: ${a.stato}` : "Abbonamento non attivo";
+  } else if (inRitardo) {
+    tono = "border-red-200 bg-red-50";
+    titolo = "Pagamento in ritardo";
+  } else if (a.disdettaProgrammata) {
+    tono = "border-amber-200 bg-amber-50";
+    titolo = "Disdetta programmata";
+  } else if (a.inProva) {
+    titolo = "Prova gratuita in corso";
+  }
+
+  return (
+    <div className={`rounded-xl border px-4 py-3 mb-6 text-sm ${tono}`}>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="font-semibold text-gray-900">{titolo}</p>
+          <p className="text-gray-700 mt-0.5">
+            {a.piano !== "—" && (
+              <>
+                Piano <b>{a.piano}</b>
+                {a.importo != null && <> · {a.importo.toFixed(2).replace(".", ",")} €</>}
+                {" · "}
+              </>
+            )}
+            {a.inProva && a.fineProva && !a.disdettaProgrammata && (
+              <>Prova gratuita fino al <b>{formatDataIt(a.fineProva)}</b> · </>
+            )}
+            {a.disdettaProgrammata ? (
+              <>
+                Il servizio resta attivo fino al <b>{formatDataIt(a.fineAccesso)}</b>, poi non si rinnova.
+              </>
+            ) : attivo && rinnovo ? (
+              <>
+                {a.inProva ? "Primo addebito" : "Prossimo rinnovo"}: <b>{formatDataIt(rinnovo)}</b>
+                {giorni != null && giorni >= 0 && giorni <= 7 && (
+                  <span className="text-amber-700"> (tra {giorni === 0 ? "oggi" : `${giorni} giorni`})</span>
+                )}
+              </>
+            ) : null}
+            {!attivo && (
+              <>Puoi consultare clienti e statistiche, ma l&apos;invio di nuove richieste è disabilitato finché non rinnovi.</>
+            )}
+          </p>
+          {inRitardo && (
+            <p className="text-red-700 mt-1">
+              L&apos;ultimo addebito non è andato a buon fine
+              {a.dataUltimoFallimento && <> ({formatDataIt(a.dataUltimoFallimento)})</>}. Aggiorna il
+              metodo di pagamento per non interrompere il servizio.
+            </p>
+          )}
+          {a.dataUltimoPagamento && (
+            <p className="text-xs text-gray-500 mt-1">Ultimo pagamento: {formatDataIt(a.dataUltimoPagamento)}</p>
+          )}
+        </div>
+        {(!attivo || inRitardo || a.disdettaProgrammata) && (
+          <button
+            onClick={onRinnova}
+            disabled={portalLoading}
+            className="shrink-0 bg-amber-600 text-white text-sm rounded-lg px-4 py-2 hover:bg-amber-700 disabled:opacity-60"
+          >
+            {portalLoading
+              ? "Apertura in corso..."
+              : a.disdettaProgrammata
+              ? "Annulla disdetta / gestisci"
+              : "Rinnova pagamento"}
+          </button>
+        )}
+      </div>
+      {portalError && <p className="mt-2 text-red-700">{portalError}</p>}
     </div>
   );
 }
