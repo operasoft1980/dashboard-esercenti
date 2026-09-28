@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { messaggioErroreStripe } from "@/lib/stripe";
 import { isAdminRequest } from "@/lib/adminSession";
 import { getStripeOverview } from "@/lib/finance";
 
@@ -14,6 +15,6 @@ export async function GET() {
     return NextResponse.json({ perCustomer, generatedAt: new Date().toISOString() });
   } catch (err) {
     console.error("Admin: lettura Stripe non riuscita", err);
-    return NextResponse.json({ error: "Stripe non raggiungibile, riprova tra poco." }, { status: 502 });
+    return NextResponse.json({ error: messaggioErroreStripe(err) }, { status: 502 });
   }
 }

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { messaggioErroreStripe } from "@/lib/stripe";
 import { isAdminRequest } from "@/lib/adminSession";
 import { getEsercenteByEmail } from "@/lib/sheets";
 import { getSubscriptionInfo, setCancelAtPeriodEnd, descriviPiano } from "@/lib/subscription";
@@ -30,7 +31,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ info, piano: descriviPiano(info) });
   } catch (err) {
     console.error("Admin: lettura abbonamento non riuscita", err);
-    return NextResponse.json({ error: "Stripe non raggiungibile, riprova." }, { status: 502 });
+    return NextResponse.json({ error: messaggioErroreStripe(err) }, { status: 502 });
   }
 }
 
@@ -56,8 +57,11 @@ export async function POST(req: NextRequest) {
     console.log(`Admin: abbonamento ${azione} per ${email}`);
     return NextResponse.json({ ok: true, info, piano: descriviPiano(info) });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : "Operazione non riuscita";
     console.error("Admin: modifica abbonamento non riuscita", err);
+    const msg =
+      err instanceof Error && err.message.startsWith("Nessun abbonamento")
+        ? err.message
+        : messaggioErroreStripe(err);
     return NextResponse.json({ error: msg }, { status: 502 });
   }
 }

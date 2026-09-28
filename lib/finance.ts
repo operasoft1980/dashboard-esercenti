@@ -22,6 +22,13 @@ export type CustomerFinance = {
   ritardoDal: string | null; // ISO: data della fattura insoluta più vecchia
 };
 
+/** Scorre tutte le pagine di un elenco Stripe, senza limite fisso di righe. */
+async function tutti<T>(list: AsyncIterable<T>): Promise<T[]> {
+  const out: T[] = [];
+  for await (const x of list) out.push(x);
+  return out;
+}
+
 const STATI_VIVI = ["trialing", "active", "past_due", "unpaid", "incomplete"];
 const toIso = (sec: number | null | undefined) => (sec ? new Date(sec * 1000).toISOString() : null);
 const idOf = (x: string | { id: string } | null | undefined) => (typeof x === "string" ? x : x?.id || "");
@@ -54,8 +61,8 @@ export type StripeOverview = {
 export async function getStripeOverview(): Promise<StripeOverview> {
   const stripe = stripeClient();
   const [subs, invoices] = await Promise.all([
-    stripe.subscriptions.list({ status: "all", limit: 100 }).autoPagingToArray({ limit: 5000 }),
-    stripe.invoices.list({ limit: 100 }).autoPagingToArray({ limit: 20000 }),
+    tutti(stripe.subscriptions.list({ status: "all", limit: 100 })),
+    tutti(stripe.invoices.list({ limit: 100 })),
   ]);
 
   // Abbonamento di riferimento per cliente: quello ancora "vivo", altrimenti il più recente.
@@ -154,9 +161,7 @@ export type IncassiPeriodo = {
  */
 export async function getIncassi(daTs: number, aTs: number): Promise<IncassiPeriodo> {
   const stripe = stripeClient();
-  const txs = await stripe.balanceTransactions
-    .list({ created: { gte: daTs, lte: aTs }, limit: 100 })
-    .autoPagingToArray({ limit: 20000 });
+  const txs = await tutti(stripe.balanceTransactions.list({ created: { gte: daTs, lte: aTs }, limit: 100 }));
 
   const out: IncassiPeriodo = { lordo: 0, rimborsi: 0, commissioni: 0, perMese: {}, movimenti: 0 };
   for (const t of txs) {

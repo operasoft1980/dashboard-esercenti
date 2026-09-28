@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { messaggioErroreStripe } from "@/lib/stripe";
 import { isAdminRequest } from "@/lib/adminSession";
 import { getIncassi, getStripeOverview } from "@/lib/finance";
 import { getCosti, getParametri } from "@/lib/adminSheets";
@@ -36,7 +37,7 @@ export async function GET(req: NextRequest) {
     [incassi, overview] = await Promise.all([getIncassi(daTs, aTs), getStripeOverview()]);
   } catch (err) {
     console.error("Bilancio: Stripe non raggiungibile", err);
-    return NextResponse.json({ error: "Stripe non raggiungibile, riprova tra poco." }, { status: 502 });
+    return NextResponse.json({ error: messaggioErroreStripe(err) }, { status: 502 });
   }
 
   let costi, parametri;
