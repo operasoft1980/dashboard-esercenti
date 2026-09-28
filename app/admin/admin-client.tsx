@@ -7,6 +7,7 @@ import type { CustomerFinance } from "@/lib/finance";
 import { formatDataIt, giorniDaOggi } from "@/lib/dates";
 import { euro } from "@/lib/format";
 import Bilancio from "./bilancio";
+import ContattiAdmin from "./contatti";
 
 const REFRESH_MS = 60_000;
 const STRIPE_REFRESH_MS = 5 * 60_000;
@@ -101,7 +102,7 @@ function giorniDa(iso: string | null | undefined): number | null {
 
 export default function AdminClient() {
   const router = useRouter();
-  const [scheda, setScheda] = useState<"esercenti" | "bilancio">("esercenti");
+  const [scheda, setScheda] = useState<"esercenti" | "bilancio" | "contatti">("esercenti");
   const [rows, setRows] = useState<EsercenteAdminRow[]>([]);
   const [fin, setFin] = useState<Record<string, CustomerFinance>>({});
   const [finStato, setFinStato] = useState<"loading" | "ok" | "errore">("loading");
@@ -382,13 +383,13 @@ export default function AdminClient() {
           </div>
         </div>
         <nav className="max-w-[1500px] mx-auto px-4 mt-3 flex gap-1">
-          {(["esercenti", "bilancio"] as const).map((s) => (
+          {(["esercenti", "bilancio", "contatti"] as const).map((s) => (
             <button
               key={s}
               onClick={() => setScheda(s)}
               className={`px-4 py-2 text-sm rounded-t-lg ${scheda === s ? "bg-gray-50 text-gray-900 font-semibold" : "text-gray-300 hover:text-white"}`}
             >
-              {s === "esercenti" ? "Esercenti" : "Bilancio"}
+              {s === "esercenti" ? "Esercenti" : s === "bilancio" ? "Bilancio" : "Potenziali clienti"}
             </button>
           ))}
         </nav>
@@ -396,6 +397,8 @@ export default function AdminClient() {
 
       {scheda === "bilancio" ? (
         <Bilancio />
+      ) : scheda === "contatti" ? (
+        <ContattiAdmin />
       ) : (
       <main className="max-w-[1500px] mx-auto px-4 py-6">
         {errore && <div className="bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 mb-4 text-sm">{errore}</div>}

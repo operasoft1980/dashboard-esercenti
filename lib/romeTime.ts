@@ -60,3 +60,10 @@ export function romeMonthKey(epochSec: number): string {
 export function oggiRomaYmd(): string {
   return romeYmd(Math.floor(Date.now() / 1000));
 }
+
+/** "YYYY-MM-DD HH:mm" nel fuso di Roma. */
+export function romeDateTime(epochSec: number = Math.floor(Date.now() / 1000)): string {
+  const p = parts(epochSec * 1000);
+  const z = (n: number) => String(n).padStart(2, "0");
+  return `${p.year}-${z(p.month)}-${z(p.day)} ${z(p.hour)}:${z(p.minute)}`;
+}
