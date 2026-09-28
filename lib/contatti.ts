@@ -64,10 +64,20 @@ export type Campagna = {
   limiteGiornaliero: number;
 };
 
-let setupFatto = false;
+let setupInCorso: Promise<void> | null = null;
 
-async function ensureSetup() {
-  if (setupFatto) return;
+/** Crea schede e intestazioni mancanti una sola volta (anche con chiamate parallele). */
+function ensureSetup(): Promise<void> {
+  if (!setupInCorso) {
+    setupInCorso = eseguiSetup().catch((err) => {
+      setupInCorso = null;
+      throw err;
+    });
+  }
+  return setupInCorso;
+}
+
+async function eseguiSetup() {
   const sheets = sheetsClient();
   const meta = await sheets.spreadsheets.get({
     spreadsheetId: ESERCENTI_SPREADSHEET_ID,
@@ -76,10 +86,16 @@ async function ensureSetup() {
   const titoli = new Set((meta.data.sheets || []).map((s) => s.properties?.title));
   const mancanti = [CONTATTI, CAMPAGNA].filter((t) => !titoli.has(t));
   if (mancanti.length) {
-    await sheets.spreadsheets.batchUpdate({
-      spreadsheetId: ESERCENTI_SPREADSHEET_ID,
-      requestBody: { requests: mancanti.map((title) => ({ addSheet: { properties: { title } } })) },
-    });
+    try {
+      await sheets.spreadsheets.batchUpdate({
+        spreadsheetId: ESERCENTI_SPREADSHEET_ID,
+        requestBody: { requests: mancanti.map((title) => ({ addSheet: { properties: { title } } })) },
+      });
+    } catch (err) {
+      // creata nel frattempo da un'altra richiesta: va bene così
+      if (!/already exists|esiste già/i.test(String(err))) throw err;
+      return;
+    }
     const data: { range: string; values: string[][] }[] = [];
     if (mancanti.includes(CONTATTI)) data.push({ range: `${CONTATTI}!A1:V1`, values: [CONTATTI_HEADER] });
     if (mancanti.includes(CAMPAGNA)) data.push({ range: `${CAMPAGNA}!A1:B1`, values: [["Chiave", "Valore"]] });
@@ -88,7 +104,6 @@ async function ensureSetup() {
       requestBody: { valueInputOption: "RAW", data },
     });
   }
-  setupFatto = true;
 }
 
 const num = (v: unknown): number | null => {

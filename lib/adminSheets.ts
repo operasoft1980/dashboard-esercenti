@@ -15,6 +15,7 @@ const COSTI_HEADER = ["ID", "Data", "Descrizione", "Categoria", "Importo", "Rico
 const PARAMETRI_HEADER = ["Chiave", "Valore"];
 
 let setupFatto = false;
+let setupInCorso: Promise<void> | null = null;
 
 async function sheetIds(): Promise<Record<string, number>> {
   const res = await sheetsClient().spreadsheets.get({
@@ -28,16 +29,29 @@ async function sheetIds(): Promise<Record<string, number>> {
   return out;
 }
 
-export async function ensureAdminSetup(): Promise<void> {
-  if (setupFatto) return;
+export function ensureAdminSetup(): Promise<void> {
+  if (setupFatto) return Promise.resolve();
+  if (!setupInCorso) {
+    setupInCorso = eseguiAdminSetup().finally(() => {
+      setupInCorso = null;
+    });
+  }
+  return setupInCorso;
+}
+
+async function eseguiAdminSetup(): Promise<void> {
   const sheets = sheetsClient();
   const ids = await sheetIds();
   const mancanti = [COSTI, PARAMETRI].filter((t) => ids[t] == null);
   if (mancanti.length) {
-    await sheets.spreadsheets.batchUpdate({
-      spreadsheetId: ESERCENTI_SPREADSHEET_ID,
-      requestBody: { requests: mancanti.map((title) => ({ addSheet: { properties: { title } } })) },
-    });
+    try {
+      await sheets.spreadsheets.batchUpdate({
+        spreadsheetId: ESERCENTI_SPREADSHEET_ID,
+        requestBody: { requests: mancanti.map((title) => ({ addSheet: { properties: { title } } })) },
+      });
+    } catch (err) {
+      if (!/already exists|esiste già/i.test(String(err))) throw err;
+    }
   }
   const head = await sheets.spreadsheets.values.batchGet({
     spreadsheetId: ESERCENTI_SPREADSHEET_ID,
