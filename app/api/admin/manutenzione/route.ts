@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { isAdminRequest } from "@/lib/adminSession";
 import { sheetsClient, getEsercenteByEmail, ESERCENTI_SPREADSHEET_ID, ESERCENTI_SHEET_NAME } from "@/lib/sheets";
 import { stripeClient, messaggioErroreStripe } from "@/lib/stripe";
+import { normalizzaWhatsapp } from "@/lib/telefono";
 
 /**
  * Manutenzione del foglio "Database Centrale" (solo admin).
@@ -42,6 +43,33 @@ export async function POST(req: NextRequest) {
       });
     }
     return NextResponse.json({ ok: true, rimossi: daTogliere.map((n) => n.name) });
+  }
+
+  if (b?.azione === "normalizzaWhatsapp") {
+    // Stesse regole dello scenario Make "Integration Tally": solo cifre, via
+    // lo "00" iniziale, "+39" davanti ai cellulari italiani senza prefisso.
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: ESERCENTI_SPREADSHEET_ID,
+      range: `${ESERCENTI_SHEET_NAME}!E2:E10000`,
+    });
+    const data: { range: string; values: string[][] }[] = [];
+    const modifiche: { riga: number; prima: string; dopo: string }[] = [];
+    (res.data.values || []).forEach((row, i) => {
+      const prima = (row[0] ?? "").toString().trim();
+      if (!prima) return;
+      const dopo = normalizzaWhatsapp(prima);
+      if (dopo && dopo !== prima) {
+        data.push({ range: `${ESERCENTI_SHEET_NAME}!E${i + 2}`, values: [[dopo]] });
+        modifiche.push({ riga: i + 2, prima, dopo });
+      }
+    });
+    if (data.length) {
+      await sheets.spreadsheets.values.batchUpdate({
+        spreadsheetId: ESERCENTI_SPREADSHEET_ID,
+        requestBody: { valueInputOption: "RAW", data },
+      });
+    }
+    return NextResponse.json({ ok: true, modifiche });
   }
 
   if (b?.azione === "correggiStripe") {
