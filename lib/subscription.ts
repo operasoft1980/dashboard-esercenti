@@ -74,16 +74,21 @@ export async function setCancelAtPeriodEnd(
   return getSubscriptionInfo(customerId);
 }
 
-export function descriviPiano(info: SubscriptionInfo | null): string {
-  if (!info || !info.interval) return "—";
-  const n = info.intervalCount || 1;
-  if (info.interval === "year") return n === 1 ? "Annuale" : `Ogni ${n} anni`;
-  if (info.interval === "month") {
+export function pianoLabel(interval: string | null | undefined, count: number | null | undefined): string {
+  if (!interval) return "—";
+  const n = count || 1;
+  if (interval === "year") return n === 1 ? "Annuale" : `Ogni ${n} anni`;
+  if (interval === "month") {
     if (n === 1) return "Mensile";
     if (n === 3) return "Trimestrale";
     if (n === 6) return "Semestrale";
     if (n === 12) return "Annuale";
     return `Ogni ${n} mesi`;
   }
-  return info.interval;
+  if (interval === "week") return n === 1 ? "Settimanale" : `Ogni ${n} settimane`;
+  return interval;
+}
+
+export function descriviPiano(info: SubscriptionInfo | null): string {
+  return pianoLabel(info?.interval, info?.intervalCount);
 }

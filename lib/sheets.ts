@@ -2,8 +2,8 @@ import { google } from "googleapis";
 import { randomUUID } from "crypto";
 
 // ---- Configuration (all via environment variables, never hardcoded) ----
-const ESERCENTI_SPREADSHEET_ID = process.env.ESERCENTI_SPREADSHEET_ID!;
-const ESERCENTI_SHEET_NAME = process.env.ESERCENTI_SHEET_NAME || "Untitled";
+export const ESERCENTI_SPREADSHEET_ID = process.env.ESERCENTI_SPREADSHEET_ID!;
+export const ESERCENTI_SHEET_NAME = process.env.ESERCENTI_SHEET_NAME || "Untitled";
 const CLIENTI_SPREADSHEET_ID = process.env.CLIENTI_SPREADSHEET_ID!;
 const CLIENTI_SHEET_NAME = process.env.CLIENTI_SHEET_NAME || "Foglio1";
 
@@ -22,7 +22,11 @@ const ESERCENTI_COLS = {
   dataUltimoPagamento: 11,
   dataProssimoRinnovo: 12,
   dataUltimoFallimento: 13,
+  ultimoPromemoria: 14,
   codiceAccesso: 15,
+  // Contatori aggiornati dallo scenario Make "Promemoria Rinnovo Abbonamenti"
+  numPromemoria: 16, // Q
+  numSolleciti: 17, // R
 };
 
 const CLIENTI_COLS = {
@@ -67,7 +71,7 @@ function getAuth() {
   });
 }
 
-function sheetsClient() {
+export function sheetsClient() {
   return google.sheets({ version: "v4", auth: getAuth() });
 }
 
@@ -86,7 +90,15 @@ export type Esercente = {
   dataUltimoPagamento: string;
   dataProssimoRinnovo: string;
   dataUltimoFallimento: string;
+  ultimoPromemoria: string;
+  numPromemoria: number;
+  numSolleciti: number;
 };
+
+function toInt(value: string): number {
+  const n = parseInt(value, 10);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
 
 function rowToEsercente(row: string[], index: number): Esercente {
   const cell = (i: number) => (row[i] || "").toString().trim();
@@ -105,6 +117,9 @@ function rowToEsercente(row: string[], index: number): Esercente {
     dataUltimoPagamento: cell(ESERCENTI_COLS.dataUltimoPagamento),
     dataProssimoRinnovo: cell(ESERCENTI_COLS.dataProssimoRinnovo),
     dataUltimoFallimento: cell(ESERCENTI_COLS.dataUltimoFallimento),
+    ultimoPromemoria: cell(ESERCENTI_COLS.ultimoPromemoria),
+    numPromemoria: toInt(cell(ESERCENTI_COLS.numPromemoria)),
+    numSolleciti: toInt(cell(ESERCENTI_COLS.numSolleciti)),
   };
 }
 
@@ -112,7 +127,7 @@ async function readEsercentiRows(): Promise<string[][]> {
   const sheets = sheetsClient();
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: ESERCENTI_SPREADSHEET_ID,
-    range: `${ESERCENTI_SHEET_NAME}!A2:P10000`,
+    range: `${ESERCENTI_SHEET_NAME}!A2:R10000`,
   });
   return (res.data.values || []) as string[][];
 }

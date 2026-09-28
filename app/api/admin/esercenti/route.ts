@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { isAdminRequest } from "@/lib/adminSession";
 import { getAllEsercenti, getAllClienti, STATO_INVIATO } from "@/lib/sheets";
+import { ensureAdminSetup } from "@/lib/adminSheets";
 
 export type EsercenteAdminRow = {
   email: string;
@@ -13,6 +14,10 @@ export type EsercenteAdminRow = {
   dataUltimoPagamento: string;
   dataProssimoRinnovo: string;
   dataUltimoFallimento: string;
+  ultimoPromemoria: string;
+  numPromemoria: number;
+  numSolleciti: number;
+  stripeCustomerId: string;
   haStripe: boolean;
   clienti: number;
   inviati: number;
@@ -28,6 +33,8 @@ export async function GET() {
     return NextResponse.json({ error: "Non autorizzato" }, { status: 401 });
   }
 
+  // Crea al primo accesso le schede/colonne dell'area admin (costi, contatori promemoria).
+  await ensureAdminSetup().catch((err) => console.error("Setup foglio admin non riuscito", err));
   const [esercenti, clienti] = await Promise.all([getAllEsercenti(), getAllClienti()]);
 
   const perEmail = new Map<string, typeof clienti>();
@@ -53,6 +60,10 @@ export async function GET() {
       dataUltimoPagamento: e.dataUltimoPagamento,
       dataProssimoRinnovo: e.dataProssimoRinnovo,
       dataUltimoFallimento: e.dataUltimoFallimento,
+      ultimoPromemoria: e.ultimoPromemoria,
+      numPromemoria: e.numPromemoria,
+      numSolleciti: e.numSolleciti,
+      stripeCustomerId: e.stripeCustomerId,
       haStripe: !!e.stripeCustomerId,
       clienti: list.length,
       inviati: list.filter((c) => c.stato === STATO_INVIATO).length,
