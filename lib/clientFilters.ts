@@ -6,7 +6,7 @@ export const FILTRI_STELLE = [
   { value: "recensiti", label: "Hanno recensito" },
   { value: "nessuna", label: "Non hanno recensito" },
   { value: "positive", label: "4–5 stelle (su Google)" },
-  { value: "negative", label: "1–3 stelle (private)" },
+  { value: "negative", label: "1–3 stelle" },
   { value: "5", label: "5 stelle" },
   { value: "4", label: "4 stelle" },
   { value: "3", label: "3 stelle" },

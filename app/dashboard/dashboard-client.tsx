@@ -687,7 +687,7 @@ export default function DashboardClient({
           </div>
           <div>
             <p className="text-xs text-gray-500 mb-2">
-              Distribuzione voti (dalla 4 in su vanno su Google, sotto restano privati). Clicca un
+              Distribuzione voti (dalla 4 in su il cliente va subito su Google; sotto scrive prima a te e può comunque recensire su Google). Clicca un
               voto per filtrare.
             </p>
             <div className="flex flex-wrap gap-3">

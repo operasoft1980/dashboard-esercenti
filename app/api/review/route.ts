@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getClienteBySubmissionId, salvaRecensione } from "@/lib/sheets";
 
-// Solo dalla 4a stella in su la recensione viene girata a Google Maps
-// (ufficiale). Da 1 a 3 stelle resta privata: salvata per l'esercente, mai
-// pubblicata.
-const SOGLIA_STELLE_GOOGLE = 4;
+// Il link a Google Maps viene offerto a TUTTI i clienti, qualunque voto diano
+// (le regole di Google vietano di invitare solo i clienti soddisfatti).
+// Cambia solo il percorso: dalla 4a stella in su si va subito su Google; sotto
+// il cliente può prima lasciare un messaggio al titolare e poi, se vuole,
+// scrivere anche su Google.
+const SOGLIA_REDIRECT_DIRETTO = 4;
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null);
@@ -29,10 +31,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Impossibile salvare la recensione, riprova" }, { status: 500 });
   }
 
-  const inviaAGoogle = stelle >= SOGLIA_STELLE_GOOGLE && !!cliente.linkGoogleMapsEsercente;
+  const googleUrl = cliente.linkGoogleMapsEsercente || null;
 
   return NextResponse.json({
     success: true,
-    redirectUrl: inviaAGoogle ? cliente.linkGoogleMapsEsercente : null,
+    redirectUrl: stelle >= SOGLIA_REDIRECT_DIRETTO ? googleUrl : null,
+    googleUrl,
   });
 }

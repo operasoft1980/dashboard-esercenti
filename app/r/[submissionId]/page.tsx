@@ -8,6 +8,8 @@ type Info = {
   giaRecensito: boolean;
 };
 
+// Dalla 4a stella si va subito su Google; sotto si passa prima dal messaggio
+// al titolare. Il link a Google viene comunque mostrato a tutti.
 const SOGLIA_STELLE_GOOGLE = 4;
 
 export default function ReviewPage({
@@ -23,6 +25,7 @@ export default function ReviewPage({
   const [commento, setCommento] = useState("");
   const [step, setStep] = useState<"vota" | "commento" | "invio" | "fatto">("vota");
   const [submitError, setSubmitError] = useState("");
+  const [googleUrl, setGoogleUrl] = useState("");
 
   useEffect(() => {
     fetch(`/api/review/${submissionId}`)
@@ -36,8 +39,8 @@ export default function ReviewPage({
 
   function handleStelleClick(n: number) {
     setStelle(n);
-    // Sotto le 4 stelle chiediamo un commento privato prima di inviare;
-    // dalla 4a in su si va dritti all'invio (poi redirect a Google).
+    // Sotto le 4 stelle proponiamo prima un messaggio al titolare; dalla 4a in
+    // su si va dritti all'invio (poi redirect a Google).
     setStep(n < SOGLIA_STELLE_GOOGLE ? "commento" : "invio");
     if (n >= SOGLIA_STELLE_GOOGLE) submit(n, "");
   }
@@ -61,6 +64,7 @@ export default function ReviewPage({
         window.location.href = data.redirectUrl;
         return;
       }
+      setGoogleUrl(typeof data.googleUrl === "string" ? data.googleUrl : "");
       setStep("fatto");
     } catch {
       setSubmitError("Errore di rete, riprova.");
@@ -105,6 +109,19 @@ export default function ReviewPage({
           Grazie per il tuo feedback! È stato inviato direttamente al titolare, che farà il
           possibile per migliorare.
         </p>
+        {googleUrl && (
+          <>
+            <p className="text-sm text-gray-600 mt-5 mb-3">
+              Se vuoi, puoi lasciare la tua recensione anche su Google.
+            </p>
+            <a
+              href={googleUrl}
+              className="block w-full bg-gray-900 text-white text-sm rounded-lg py-2.5 font-medium hover:bg-gray-800"
+            >
+              Scrivi una recensione su Google
+            </a>
+          </>
+        )}
       </Shell>
     );
   }
@@ -134,8 +151,9 @@ export default function ReviewPage({
       {step === "commento" && (
         <div className="mt-5 text-left">
           <p className="text-xs text-gray-500 mb-2">
-            Ci dispiace che non sia andata benissimo. Raccontaci cosa possiamo migliorare — resterà
-            privato, visibile solo al titolare.
+            Ci dispiace che non sia andata benissimo. Raccontaci cosa possiamo migliorare: il
+            messaggio arriva direttamente al titolare. Subito dopo potrai, se vuoi, lasciare la tua
+            recensione anche su Google.
           </p>
           <textarea
             value={commento}
@@ -149,7 +167,7 @@ export default function ReviewPage({
             onClick={() => submit(stelle, commento)}
             className="w-full bg-gray-900 text-white text-sm rounded-lg py-2.5 font-medium hover:bg-gray-800"
           >
-            Invia feedback privato
+            Invia al titolare
           </button>
         </div>
       )}
